@@ -10,4 +10,4 @@ COPY src ./src
 
 EXPOSE 3000
 
-CMD ["bun", "src/index.ts"]
+CMD ["bun", "--bun", "run", "src/index.ts"]

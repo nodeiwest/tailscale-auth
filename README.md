@@ -71,3 +71,17 @@ labels:
 Keep the auth service off the public internet. Traefik should be the only caller.
 
 For Better Auth bootstrap routes such as `/api/auth/tailscale`, set `PERMISSIVE_PATH_PREFIXES=/api/auth/tailscale` so non-tailnet users can fall through to your app and get redirected to manual sign-in instead of seeing Traefik's raw `401`.
+
+## Container Publishing
+
+[`publish-container.yml`](./.github/workflows/publish-container.yml) builds and
+publishes the runtime image as `git.dgren.dev/<owner>/tailscale-auth`.
+
+Set these repository variables and secrets before enabling the workflow:
+
+- `GITEA_INSTANCE_URL`: optional checkout/source URL override, for example `https://git.dgren.dev`
+- `REGISTRY_TOKEN`: Gitea personal access token with package write access
+- `REGISTRY_USERNAME`: optional override for the registry login account
+
+On `main`, the workflow publishes `latest`, `main`, and `sha-<commit>` tags. Tag
+pushes also publish the Git tag name.

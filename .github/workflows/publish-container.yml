@@ -1,0 +1,127 @@
+name: Publish container image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    env:
+      REPOSITORY: ${{ github.repository }}
+      REF_NAME: ${{ github.ref_name }}
+      REF_TYPE: ${{ github.ref_type }}
+      SHA: ${{ github.sha }}
+      ACTOR: ${{ github.actor }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      GITEA_INSTANCE_URL: ${{ vars.GITEA_INSTANCE_URL || github.server_url }}
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          github-server-url: ${{ vars.GITEA_INSTANCE_URL || github.server_url }}
+
+      - name: Set up Docker Buildx
+        uses: useblacksmith/setup-docker-builder@v1
+
+      - name: Derive registry and image metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          registry="git.dgren.dev"
+          remote_url="$(git remote get-url origin)"
+          instance_url="${GITEA_INSTANCE_URL:-}"
+
+          if [ -n "$instance_url" ]; then
+            instance_url="${instance_url%/}"
+          fi
+
+          case "$remote_url" in
+            ssh://git@*/*)
+              source_url="$(printf '%s\n' "$remote_url" | sed -E 's#^ssh://git@([^/]+)/(.+)\.git$#https://\1/\2#; t; s#^ssh://git@([^/]+)/(.+)$#https://\1/\2#')"
+              ;;
+            git@*:*)
+              source_url="$(printf '%s\n' "$remote_url" | sed -E 's#^git@([^:]+):(.+)\.git$#https://\1/\2#; t; s#^git@([^:]+):(.+)$#https://\1/\2#')"
+              ;;
+            http://*|https://*)
+              source_url="$(printf '%s\n' "$remote_url" | sed -E 's#(https?://[^/]+/.+)\.git$#\1#')"
+              ;;
+            *)
+              echo "Unsupported origin URL: $remote_url" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ -n "$instance_url" ]; then
+            source_url="${instance_url}/${REPOSITORY}"
+          fi
+
+          safe_ref="$(printf '%s' "$REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9._-]+#-#g; s#(^-+|-+$)##g')"
+
+          if [ -z "$safe_ref" ]; then
+            safe_ref="detached"
+          fi
+
+          repo_owner="${REPOSITORY%/*}"
+          repo_name="${REPOSITORY#*/}"
+          image="${registry}/${repo_owner}/${repo_name}"
+
+          tags=(
+            "${image}:sha-${SHA:0:12}"
+            "${image}:${safe_ref}"
+          )
+
+          if [ "${REF_TYPE}" = "tag" ]; then
+            tags+=("${image}:${REF_NAME}")
+          fi
+
+          if [ "${REF_TYPE}" = "branch" ] && [ "${REF_NAME}" = "${DEFAULT_BRANCH:-main}" ]; then
+            tags+=("${image}:latest")
+          fi
+
+          {
+            echo "registry=$registry"
+            echo "image=$image"
+            echo "source_url=$source_url"
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+            echo "labels<<EOF"
+            printf '%s\n' \
+              "org.opencontainers.image.revision=${SHA}" \
+              "org.opencontainers.image.source=${source_url}" \
+              "org.opencontainers.image.version=${REF_NAME}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the Gitea container registry
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          username="${REGISTRY_USERNAME:-$ACTOR}"
+          if [ -z "${REGISTRY_TOKEN}" ]; then
+            echo "Missing REGISTRY_TOKEN secret." >&2
+            exit 1
+          fi
+
+          printf '%s' "$REGISTRY_TOKEN" | docker login "${{ steps.meta.outputs.registry }}" --username "$username" --password-stdin
+
+      - name: Build and publish image
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
