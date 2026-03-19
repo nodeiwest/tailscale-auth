@@ -59,6 +59,7 @@ async function callLocalApi<T>(socketPath: string, path: string) {
         method: "GET",
         headers: {
           Accept: "application/json",
+          Host: "local-tailscaled.sock",
         },
       },
       (response) => {
