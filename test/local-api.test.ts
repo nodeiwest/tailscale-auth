@@ -70,4 +70,40 @@ describe("lookupTailscaleIdentity", () => {
       tailnet: "example.com",
     });
   });
+
+  test("treats a 404 whois response as no matching identity", async () => {
+    requestMock.mockImplementation((options, callback) => {
+      expect(options).toMatchObject({
+        path: "/localapi/v0/whois?addr=83.250.157.218%3A0",
+      });
+
+      const response = {
+        statusCode: 404,
+        on(event: string, handler: (value?: unknown) => void) {
+          if (event === "data") {
+            handler(Buffer.from("no match for IP:port\n"));
+          }
+
+          if (event === "end") {
+            handler();
+          }
+
+          return this;
+        },
+      };
+
+      callback(response);
+
+      return {
+        on() {
+          return this;
+        },
+        end() {},
+      };
+    });
+
+    await expect(
+      lookupTailscaleIdentity("/var/run/tailscale/tailscaled.sock", "83.250.157.218"),
+    ).resolves.toBeNull();
+  });
 });

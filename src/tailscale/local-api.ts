@@ -98,10 +98,18 @@ async function callLocalApi<T>(socketPath: string, path: string) {
 }
 
 export async function lookupTailscaleIdentity(socketPath: string, ip: string) {
-  const payload = await callLocalApi<TailscaleWhoisResponse>(
-    socketPath,
-    `/localapi/v0/whois?addr=${encodeURIComponent(formatWhoisAddress(ip))}`,
-  );
+  try {
+    const payload = await callLocalApi<TailscaleWhoisResponse>(
+      socketPath,
+      `/localapi/v0/whois?addr=${encodeURIComponent(formatWhoisAddress(ip))}`,
+    );
 
-  return mapIdentity(payload);
+    return mapIdentity(payload);
+  } catch (error) {
+    if (error instanceof TailscaleLookupError && error.statusCode === 404) {
+      return null;
+    }
+
+    throw error;
+  }
 }
